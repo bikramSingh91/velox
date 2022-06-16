@@ -41,6 +41,15 @@ inline void registerArrayJoinFunctions() {
       Varchar>({"array_join"});
 }
 
+template <typename T>
+inline void registerArrayCombinationsFunctions() {
+  registerFunction<
+      ParameterBinder<CombinationsFunction, T>,
+      Array<Array<T>>,
+      Array<T>,
+      int64_t>({"combinations"});
+}
+
 void registerArrayFunctions() {
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_constructor, "array_constructor");
   VELOX_REGISTER_VECTOR_FUNCTION(udf_array_distinct, "array_distinct");
@@ -78,5 +87,17 @@ void registerArrayFunctions() {
   registerArrayJoinFunctions<Varchar>();
   registerArrayJoinFunctions<Timestamp>();
   registerArrayJoinFunctions<Date>();
+
+  registerArrayCombinationsFunctions<int8_t>();
+  registerArrayCombinationsFunctions<int16_t>();
+  registerArrayCombinationsFunctions<int32_t>();
+  registerArrayCombinationsFunctions<int64_t>();
+  registerArrayCombinationsFunctions<float>();
+  registerArrayCombinationsFunctions<double>();
+  registerArrayCombinationsFunctions<bool>();
+  registerArrayCombinationsFunctions<Varchar>();
+  registerArrayCombinationsFunctions<Timestamp>();
+  registerArrayCombinationsFunctions<Date>();
+  //registerArrayCombinationsFunctions<Generic<T1>>();
 }
 }; // namespace facebook::velox::functions

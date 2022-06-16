@@ -41,7 +41,7 @@ struct ArrayMinMaxFunction {
   void assign(TReturn& out, const TInput& value) {
     out = value;
   }
-
+// This is a specialization! why only for this? why not other complex types like an array, we can have an array of arrays?? right?
   void assign(out_type<Varchar>& out, const arg_type<Varchar>& value) {
     // TODO: reuse strings once support landed.
     out.resize(value.size());
@@ -153,6 +153,89 @@ struct ArrayJoinFunction {
       const arg_type<velox::Varchar>& nullReplacement) {
     createOutputString(result, inputArray, delim, nullReplacement.getString());
     return true;
+  }
+};
+
+template <typename TExecParams, typename T>
+struct CombinationsFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(TExecParams);
+
+  static const int64_t MAX_COMBINATION_LENGTH = 5;
+  static const int64_t MAX_RESULT_ELEMENTS = 100000;
+
+  /*static constexpr int32_t reuse_strings_from_arg =
+      std::is_same<T, Varchar>::value ? 0 : -1;*/
+
+  int64_t CalculateNumOfCombinations(
+      int64_t numElements,
+      int64_t combinationLength) {
+    int64_t numCombos = 1;
+    for (int i = 1; i <= combinationLength; i++) {
+      numCombos = (numCombos * (numElements - combinationLength + i)) / i;
+    }
+    return numCombos;
+  }
+
+  void resetCombination(std::vector<int>& combination, int to) {
+    for (int i = 0; i < to; i++) {
+      combination[i] = i;
+    }
+  }
+
+  std::vector<int> firstCombination(int64_t size) {
+    std::vector<int> combination(size, 0);
+    std::iota(combination.begin(), combination.end(), 0);
+    return combination;
+  }
+
+  bool nextCombination(std::vector<int>& combination, int64_t inputArraySize) {
+    for (int i = 0; i < combination.size() - 1; i++) {
+      if (combination[i] + 1 < combination[i + 1]) {
+        combination[i]++;
+        resetCombination(combination, i);
+        return true;
+      }
+    }
+    if (combination.size() > 0 && combination.back() + 1 < inputArraySize) {
+      combination.back()++;
+      resetCombination(combination, combination.size() - 1);
+      return true;
+    }
+    return false;
+  }
+
+  void appendEntryFromCombination(
+      out_type<velox::Array<velox::Array<T>>>& result,
+      const arg_type<velox::Array<T>>& array,
+      std::vector<int>& combination) {
+    auto& innerArray = result.add_item();
+    for (int idx : combination) {
+      if constexpr (std::is_same<T, Varchar>::value) {
+        innerArray.add_item().setNoCopy(array[idx].value());
+      } else {
+        innerArray.add_item() = array[idx].value();
+      }
+    }
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      out_type<velox::Array<velox::Array<T>>>& result,
+      const arg_type<velox::Array<T>>& array,
+      const int64_t& combinationLength) {
+    auto arraySize = array.size();
+    if(combinationLength > arraySize) return; // An empty array should be returned
+    if (combinationLength > MAX_COMBINATION_LENGTH || combinationLength < 0)
+      return; // TODO: throw appropriate error here
+    int64_t numCombinations =
+        CalculateNumOfCombinations(arraySize, combinationLength);
+    if (numCombinations > MAX_RESULT_ELEMENTS)
+      return; // TODO: throw appropriate error here
+
+    result.reserve(numCombinations);
+    std::vector<int> currCombination = firstCombination(combinationLength);
+    do {
+      appendEntryFromCombination(result, array, currCombination);
+    } while (nextCombination(currCombination, arraySize));
   }
 };
 
