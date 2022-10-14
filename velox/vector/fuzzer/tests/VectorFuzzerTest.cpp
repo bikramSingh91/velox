@@ -441,6 +441,8 @@ TEST_F(VectorFuzzerTest, lazyOverDictionary) {
   // Case 1: Applying a single dictionary layer.
   auto vector = fuzzer.fuzzFlat(BIGINT());
   auto dict = fuzzer.fuzzDictionary(vector);
+  DictionaryVector<long long>* ptr =
+      dynamic_cast<DictionaryVector<long long int>*>(dict.get());
   auto lazy = VectorFuzzer::wrapInLazyVector(dict);
   LazyVector::ensureLoadedRows(lazy, partialRows);
   ASSERT_TRUE(VectorEncoding::isDictionary(lazy->loadedVector()->encoding()));

@@ -681,6 +681,20 @@ RowVectorPtr VectorFuzzer::fuzzRowChildrenToLazy(RowVectorPtr rowVector) {
       std::move(children));
 }
 
+SelectivityVector VectorFuzzer::fuzzSelectivity(
+    vector_size_t size,
+    double selectionRatio) {
+  SelectivityVector rows(size, false);
+  // Starting from 1 to ensure at least one row is selected.
+  for (int i = 0; i < size; ++i) {
+    if (coinToss(selectionRatio)) {
+      rows.setValid(i, true);
+    }
+  }
+  rows.updateBounds();
+  return rows;
+}
+
 VectorPtr VectorLoaderWrap::makeEncodingPreservedCopy(SelectivityVector& rows) {
   VectorPtr result;
   DecodedVector decoded;

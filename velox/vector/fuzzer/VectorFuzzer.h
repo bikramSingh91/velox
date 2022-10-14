@@ -235,6 +235,8 @@ class VectorFuzzer {
   // re-used between multiple evaluations.
   RowVectorPtr fuzzRowChildrenToLazy(RowVectorPtr rowVector);
 
+  SelectivityVector fuzzSelectivity(vector_size_t size, double selectionRatio);
+
  private:
   // Generates a flat vector for primitive types.
   VectorPtr fuzzFlatPrimitive(const TypePtr& type, vector_size_t size);
