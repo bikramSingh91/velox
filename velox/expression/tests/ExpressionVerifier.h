@@ -36,7 +36,9 @@ class ExpressionVerifier {
   ExpressionVerifier(
       core::ExecCtx* FOLLY_NONNULL execCtx,
       ExpressionVerifierOptions options)
-      : execCtx_(execCtx), options_(options) {}
+      : execCtx_(execCtx), options_(options) {
+    setup();
+  }
 
   // Executes an expression both using common path (all evaluation
   // optimizations) and simplified path. Additionally, a sorted list of column
@@ -64,7 +66,10 @@ class ExpressionVerifier {
       const std::string& sql,
       const std::vector<VectorPtr>& complexConstants);
 
+  void setup();
+
  private:
+  static bool setupReaderWriter;
   core::ExecCtx* FOLLY_NONNULL execCtx_;
   const ExpressionVerifierOptions options_;
 };

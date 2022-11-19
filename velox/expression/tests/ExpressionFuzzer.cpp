@@ -410,7 +410,7 @@ void ExpressionFuzzer::reSeed() {
 }
 
 RowVectorPtr ExpressionFuzzer::generateRowVector() {
-  return vectorFuzzer_.fuzzRow(
+  return vectorFuzzer_.fuzzInputRow(
       ROW(std::move(inputRowNames_), std::move(inputRowTypes_)));
 }
 

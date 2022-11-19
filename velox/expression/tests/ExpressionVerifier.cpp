@@ -21,6 +21,14 @@
 #include "velox/vector/VectorSaver.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
+#include "velox/exec/tests/utils/AssertQueryBuilder.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/parse/TypeResolver.h"
+
+#include "velox/common/file/FileSystems.h"
+#include "velox/connectors/hive/HiveWriteProtocol.h"
+#include "velox/dwio/dwrf/reader/DwrfReader.h"
 
 namespace facebook::velox::test {
 namespace {
@@ -118,7 +126,112 @@ RowVectorPtr wrapColumnsInLazy(
   return lazyRowVector;
 }
 
+
+std::string writeToFile(
+    const std::vector<RowVectorPtr>& vectors,
+    memory::MemoryPool* FOLLY_NONNULL pool) {
+  static const auto kWriter = "HiveConnectorTestBase.Writer";
+  std::string filePath =
+      exec::test::TempFilePath::create()->path; // get temp file path
+  facebook::velox::dwrf::WriterOptions options;
+  options.config = std::make_shared<facebook::velox::dwrf::Config>();
+  options.schema = vectors[0]->type();
+  auto sink =
+      std::make_unique<facebook::velox::dwio::common::FileSink>(filePath);
+  auto childPool = pool->addChild(kWriter, std::numeric_limits<int64_t>::max());
+  facebook::velox::dwrf::Writer writer{options, std::move(sink), *childPool};
+  for (size_t i = 0; i < vectors.size(); ++i) {
+    writer.write(vectors[i]);
+  }
+  writer.close();
+  return filePath;
+}
+
+std::shared_ptr<connector::ConnectorSplit> makeHiveConnectorSplit(
+    const std::string& filePath) {
+  return exec::test::HiveConnectorSplitBuilder(filePath)
+      .start(0)
+      .length(std::numeric_limits<uint64_t>::max())
+      .build();
+}
+
+void removeFile(const std::string& filename) {
+  try {
+    if (std::filesystem::remove(filename))
+      std::cout << "file " << filename << " deleted.\n";
+    else
+      std::cout << "file " << filename << " not found.\n";
+  } catch (const std::filesystem::filesystem_error& err) {
+    std::cout << "filesystem error: " << err.what() << '\n';
+  }
+}
+
+RowVectorPtr evaluateUsingOperators(
+    const core::TypedExprPtr& expr,
+    RowVectorPtr rowVector) {
+  auto filePath = writeToFile({rowVector}, rowVector->pool());
+  auto rowType = std::dynamic_pointer_cast<const RowType>(rowVector->type());
+  core::PlanNodeId scanNodeId;
+  // functions::prestosql::registerAllScalarFunctions();
+  parse::registerTypeResolver();
+  auto plan = exec::test::PlanBuilder()
+                  .tableScan(rowType)
+                  .capturePlanNodeId(scanNodeId)
+                  .project({expr})
+                  .planNode();
+  auto result = exec::test::AssertQueryBuilder(plan)
+                    .splits(scanNodeId, {makeHiveConnectorSplit(filePath)})
+                    .copyResults(rowVector->pool());
+  removeFile(filePath);
+  return result;
+}
+
+bool hasWriterSupport(const TypePtr& type) {
+  switch (type->kind()) {
+    case TypeKind::BOOLEAN:
+    case TypeKind::TINYINT:
+    case TypeKind::SMALLINT:
+    case TypeKind::INTEGER:
+    case TypeKind::BIGINT:
+    case TypeKind::REAL:
+    case TypeKind::DOUBLE:
+    case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY:
+    case TypeKind::TIMESTAMP:
+      return true;
+    case TypeKind::ROW:
+    case TypeKind::MAP:
+    case TypeKind::ARRAY:
+      for (auto i = 0; i < type->size(); ++i) {
+        if(!hasWriterSupport(type->childAt(i))) return false;
+      }
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 } // namespace
+
+bool ExpressionVerifier::setupReaderWriter = false;
+
+void ExpressionVerifier::setup() {
+  if (!setupReaderWriter) {
+    setupReaderWriter = true;
+    auto hiveConnector =
+        connector::getConnectorFactory(
+            connector::hive::HiveConnectorFactory::kHiveConnectorName)
+            ->newConnector("test-hive", nullptr);
+    connector::registerConnector(hiveConnector);
+    // To be able to read local files, we need to register the local file
+    // filesystem. We also need to register the dwrf reader factory as well as a
+    // write protocol, in this case commit is not required:
+    filesystems::registerLocalFileSystem();
+    dwrf::registerDwrfReaderFactory();
+    connector::hive::HiveNoCommitWriteProtocol::registerProtocol();
+  }
+}
 
 bool ExpressionVerifier::verify(
     const core::TypedExprPtr& plan,
@@ -166,6 +279,7 @@ bool ExpressionVerifier::verify(
 
   std::exception_ptr exceptionCommonPtr;
   std::exception_ptr exceptionSimplifiedPtr;
+  std::exception_ptr exceptionOperatorPtr;
 
   VLOG(1) << "Starting common eval execution.";
   SelectivityVector rows{rowVector ? rowVector->size() : 1};
@@ -214,16 +328,35 @@ bool ExpressionVerifier::verify(
     exceptionSimplifiedPtr = std::current_exception();
   }
 
+  RowVectorPtr resultFromOperators;
+  bool canExecuteViaOperators = false;
+  if(rowVector->childrenSize() > 0 && hasWriterSupport(rowVector->type())){
+    canExecuteViaOperators = true;
+      try {
+        resultFromOperators = evaluateUsingOperators(plan, rowVector);
+      } catch (...) {
+        if (!canThrow) {
+          LOG(ERROR)
+              << "Operator eval wasn't supposed to throw, but it did. Aborting.";
+          throw;
+        }
+        exceptionOperatorPtr = std::current_exception();
+      }
+  }
+
+
   try {
     // Compare results or exceptions (if any). Fail is anything is different.
-    if (exceptionCommonPtr || exceptionSimplifiedPtr) {
+    if (exceptionCommonPtr || exceptionSimplifiedPtr || (canExecuteViaOperators && exceptionOperatorPtr)) {
       // Throws in case exceptions are not compatible. If they are compatible,
       // return false to signal that the expression failed.
-      compareExceptions(exceptionCommonPtr, exceptionSimplifiedPtr);
+      if(exceptionCommonPtr || exceptionSimplifiedPtr) compareExceptions(exceptionCommonPtr, exceptionSimplifiedPtr);
+      if(canExecuteViaOperators && (exceptionCommonPtr || exceptionOperatorPtr)) compareExceptions(exceptionCommonPtr, exceptionOperatorPtr);
       return false;
     } else {
       // Throws in case output is different.
       compareVectors(commonEvalResult.front(), simplifiedEvalResult.front());
+      if(canExecuteViaOperators) compareVectors(commonEvalResult.front(), resultFromOperators->childAt(0));
     }
   } catch (...) {
     if (!options_.reproPersistPath.empty() && !options_.persistAndRunOnce) {

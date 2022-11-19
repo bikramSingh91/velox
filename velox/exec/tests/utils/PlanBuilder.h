@@ -207,6 +207,7 @@ class PlanBuilder {
   ///
   /// will produce projected columns named sum_ab, c and p2.
   PlanBuilder& project(const std::vector<std::string>& projections);
+  PlanBuilder& project(const std::vector<core::TypedExprPtr>& projections);
 
   /// Similar to project() except 'optionalProjections' could be empty and the
   /// function will skip creating a ProjectNode in that case.

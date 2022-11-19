@@ -86,7 +86,7 @@ add_library(velox_expression_verifier ExpressionVerifier.cpp)
 
 target_link_libraries(
   velox_expression_verifier velox_vector_test_lib velox_vector_fuzzer
-  velox_type velox_expression_test_utility)
+  velox_type velox_expression_test_utility velox_dwio_dwrf_writer velox_exec_test_lib)
 
 add_library(velox_expression_fuzzer ExpressionFuzzer.cpp)
 

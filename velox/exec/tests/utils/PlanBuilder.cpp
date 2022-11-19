@@ -250,6 +250,20 @@ PlanBuilder& PlanBuilder::project(const std::vector<std::string>& projections) {
   return *this;
 }
 
+PlanBuilder& PlanBuilder::project(const std::vector<core::TypedExprPtr>& projections) {
+  std::vector<core::TypedExprPtr> expressions = projections;
+  std::vector<std::string> projectNames;
+  for (auto i = 0; i < projections.size(); ++i) {
+      projectNames.push_back(fmt::format("p{}", i));
+  }
+  planNode_ = std::make_shared<core::ProjectNode>(
+      nextPlanNodeId(),
+      std::move(projectNames),
+      std::move(expressions),
+      planNode_);
+  return *this;
+}
+
 PlanBuilder& PlanBuilder::optionalFilter(const std::string& optionalFilter) {
   if (optionalFilter.empty()) {
     return *this;
