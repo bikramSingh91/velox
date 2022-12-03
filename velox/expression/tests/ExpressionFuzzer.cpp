@@ -301,13 +301,12 @@ ExpressionFuzzer::ExpressionFuzzer(
     bool atLeastOneSupported = false;
     for (const auto& signature : function.second) {
       ++totalFunctionSignatures;
-
       // Not supporting lambda functions, or functions using decimal and
       // timestamp with time zone types.
       if (useTypeName(*signature, "function") ||
           useTypeName(*signature, "long_decimal") ||
           useTypeName(*signature, "short_decimal") ||
-          useTypeName(*signature, "decimal") ||
+          useTypeName(*signature, "DECIMAL") ||
           useTypeName(*signature, "timestamp with time zone") ||
           useTypeName(*signature, "interval day to second") ||
           (FLAGS_velox_fuzzer_enable_complex_types &&
@@ -327,6 +326,20 @@ ExpressionFuzzer::ExpressionFuzzer(
         }
         atLeastOneSupported = true;
         ++supportedFunctionSignatures;
+
+        // BIKRAM
+        auto& returnType = signature->returnType().baseName();
+        if (typeVariables.find(returnType) == typeVariables.end()) {
+          typeToExpressionList_[returnType].push_back(function.first);
+        } else {
+          // Return type is a template variable.
+          typeToExpressionList_[kTypeParameterName].push_back(function.first);
+        }
+        // move the type variables after removing signatureTemplates_.
+        expressionToTemplatedSignature_[function.first][returnType]
+            .emplace_back(
+                SignatureTemplate{function.first, signature, typeVariables});
+
         signatureTemplates_.emplace_back(SignatureTemplate{
             function.first, signature, std::move(typeVariables)});
       } else if (
@@ -334,6 +347,15 @@ ExpressionFuzzer::ExpressionFuzzer(
               processSignature(function.first, *signature)) {
         atLeastOneSupported = true;
         ++supportedFunctionSignatures;
+
+        // BIKRAM
+        auto resolvedReturnType =
+            SignatureBinder::tryResolveType(signature->returnType(), {}, {});
+        auto returnType = typeToBaseName(resolvedReturnType);
+        typeToExpressionList_[returnType].push_back(function.first);
+        expressionToSignature_[function.first][returnType].emplace_back(
+            *callableFunction);
+
         signatures_.emplace_back(*callableFunction);
       }
     }
@@ -551,27 +573,40 @@ core::TypedExprPtr ExpressionFuzzer::generateExpression(
   bool reuseExpression = FLAGS_velox_fuzzer_enable_expression_reuse &&
       !listOfCandidateExprs.empty() && vectorFuzzer_.coinToss(0.3);
   if (!reuseExpression) {
-    auto firstAttempt =
-        &ExpressionFuzzer::generateExpressionFromConcreteSignatures;
-    auto secondAttempt =
-        &ExpressionFuzzer::generateExpressionFromSignatureTemplate;
+    auto baseType = typeToBaseName(returnType);
+    VELOX_CHECK_NE(
+        baseType, "T", "returnType should be have all concrete types defined");
+    auto& baseList = typeToExpressionList_[baseType];
+    auto& templateList = typeToExpressionList_[kTypeParameterName];
+    std::vector<std::string> eligible = baseList;
+    copy(templateList.begin(), templateList.end(), back_inserter(eligible));
 
-    size_t useSignatureTemplate =
-        boost::random::uniform_int_distribution<uint32_t>(0, 1)(rng_);
-    if (FLAGS_velox_fuzzer_enable_complex_types && useSignatureTemplate) {
-      std::swap(firstAttempt, secondAttempt);
+    size_t chosenExprIndex = boost::random::uniform_int_distribution<uint32_t>(
+        0, eligible.size() - 1)(rng_);
+    std::string chosenFunctionName;
+    if (chosenExprIndex < baseList.size()) {
+      chosenFunctionName = baseList[chosenExprIndex];
+    } else {
+      chosenExprIndex -= baseList.size();
+      chosenFunctionName = templateList[chosenExprIndex];
     }
 
-    core::TypedExprPtr expression = (this->*firstAttempt)(returnType);
+    core::TypedExprPtr expression = generateExpressionFromConcreteSignatures(
+        returnType, chosenFunctionName);
     if (!expression) {
       if (FLAGS_velox_fuzzer_enable_complex_types) {
-        expression = (this->*secondAttempt)(returnType);
+        expression = generateExpressionFromSignatureTemplate(
+            returnType, chosenFunctionName);
       }
       if (!expression) {
+        // tODO: the issue here is that some of the functions that have complex
+        // concrete nested types as return types get picked by a return type
+        // that needs a complex(T) instead. This then runs into this condition
+        // here and only return a constant then.
         LOG(INFO) << "Couldn't find any function to return '"
                   << returnType->toString()
                   << "'. Returning a constant instead.";
-        expression = generateArgConstant(returnType);
+        return generateArgConstant(returnType);
       }
     }
     if (remainingLevelOfNesting_ == 0) {
@@ -596,20 +631,22 @@ core::TypedExprPtr ExpressionFuzzer::getCallExprFromCallable(
 }
 
 core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
-    const TypePtr& returnType) {
-  auto it = signaturesMap_.find(returnType->kind());
-  if (it == signaturesMap_.end()) {
+    const TypePtr& returnType, const std::string& functionName) {
+  if (expressionToSignature_.find(functionName) == expressionToSignature_.end()) {
     return nullptr;
   }
-
+  auto baseType = typeToBaseName(returnType);
+  auto itr = expressionToSignature_[functionName].find(baseType);
+  if (itr == expressionToSignature_[functionName].end()) {
+    return nullptr;
+  }
   // Only function signatures whose return type equals to returnType are
   // eligible. There may be ineligible signatures in signaturesMap_ because
   // the map keys only differentiate top-level type kinds.
   std::vector<const CallableSignature*> eligible;
-  const auto& signatures = it->second;
-  for (const auto* signature : signatures) {
-    if (signature->returnType->equivalent(*returnType)) {
-      eligible.push_back(signature);
+  for (const auto& signature : itr->second) {
+    if (signature.returnType->equivalent(*returnType)) {
+      eligible.push_back(&signature);
     }
   }
   if (eligible.empty()) {
@@ -626,21 +663,26 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
 
 const SignatureTemplate* ExpressionFuzzer::chooseRandomSignatureTemplate(
     const TypePtr& returnType,
-    const std::string& typeName) {
+    const std::string& typeName,
+    const std::string& functionName) {
   std::vector<const SignatureTemplate*> eligible;
-  auto it = signatureTemplateMap_.find(typeName);
-  if (it == signatureTemplateMap_.end()) {
+  if (expressionToTemplatedSignature_.find(functionName) ==
+      expressionToTemplatedSignature_.end()) {
+    return nullptr;
+  }
+  auto it = expressionToTemplatedSignature_[functionName].find(typeName);
+  if (it == expressionToTemplatedSignature_[functionName].end()) {
     return nullptr;
   }
   // Only function signatures whose return type can match returnType are
   // eligible. There may be ineligible signatures in signaturesMap_ because
   // the map keys only differentiate the top-level type names.
   auto& signatureTemplates = it->second;
-  for (auto* signatureTemplate : signatureTemplates) {
+  for (auto& signatureTemplate : signatureTemplates) {
     exec::ReverseSignatureBinder binder{
-        *signatureTemplate->signature, returnType};
+        *signatureTemplate.signature, returnType};
     if (binder.tryBind()) {
-      eligible.push_back(signatureTemplate);
+      eligible.push_back(&signatureTemplate);
     }
   }
   if (eligible.empty()) {
@@ -653,12 +695,15 @@ const SignatureTemplate* ExpressionFuzzer::chooseRandomSignatureTemplate(
 }
 
 core::TypedExprPtr ExpressionFuzzer::generateExpressionFromSignatureTemplate(
-    const TypePtr& returnType) {
+    const TypePtr& returnType,
+    const std::string& functionName) {
   auto typeName = typeToBaseName(returnType);
 
-  auto* chosen = chooseRandomSignatureTemplate(returnType, typeName);
+  auto* chosen =
+      chooseRandomSignatureTemplate(returnType, typeName, functionName);
   if (!chosen) {
-    chosen = chooseRandomSignatureTemplate(returnType, kTypeParameterName);
+    chosen = chooseRandomSignatureTemplate(
+        returnType, kTypeParameterName, functionName);
     if (!chosen) {
       return nullptr;
     }

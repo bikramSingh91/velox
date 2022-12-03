@@ -88,19 +88,20 @@ class ExpressionFuzzer {
   /// Generate an expression with a random concrete function signature that
   /// returns returnType.
   core::TypedExprPtr generateExpressionFromConcreteSignatures(
-      const TypePtr& returnType);
+      const TypePtr& returnType, const std::string& functionName);
 
   /// Return a random signature template mapped to typeName in
   /// signatureTemplateMap_ whose return type can match returnType. Return
   /// nullptr if no such signature template exists.
   const SignatureTemplate* chooseRandomSignatureTemplate(
       const TypePtr& returnType,
-      const std::string& typeName);
+      const std::string& typeName,
+      const std::string& functionName);
 
   /// Generate an expression with a random function signature template that
   /// returns returnType.
   core::TypedExprPtr generateExpressionFromSignatureTemplate(
-      const TypePtr& returnType);
+      const TypePtr& returnType, const std::string& functionName);
 
   /// If --duration_sec > 0, check if we expired the time budget. Otherwise,
   /// check if we expired the number of iterations (--steps).
@@ -113,6 +114,15 @@ class ExpressionFuzzer {
 
   FuzzerGenerator rng_;
   size_t currentSeed_{0};
+
+  std::unordered_map<std::string, std::vector<std::string>>
+      typeToExpressionList_;
+
+  std::unordered_map<std::string, std::unordered_map<std::string, std::vector<CallableSignature>>>
+      expressionToSignature_;
+
+  std::unordered_map<std::string, std::unordered_map<std::string, std::vector<SignatureTemplate>>>
+      expressionToTemplatedSignature_;
 
   std::vector<CallableSignature> signatures_;
 
