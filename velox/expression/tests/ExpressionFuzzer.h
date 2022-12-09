@@ -112,6 +112,24 @@ class ExpressionFuzzer {
   /// iteration.
   void reset();
 
+  void UpdateStats(std::string function) {
+      totalPicked++;
+      expressionFreq_[function]++;
+  }
+
+  void LogStats() {
+    std::vector<std::pair<std::string, int64_t>> entries;
+    for (auto& elem : expressionFreq_) {
+      entries.push_back(elem);
+    }
+    std::sort(entries.begin(), entries.end(), [](auto& left, auto& right) {
+      return left.second > right.second;
+    });
+    for(auto& elem: entries) {
+      LOG(INFO) << elem.first << " : " << elem.second << "(" << (elem.second*100.00)/totalPicked << "%)";
+    }
+  }
+
   FuzzerGenerator rng_;
   size_t currentSeed_{0};
 
@@ -124,6 +142,8 @@ class ExpressionFuzzer {
   std::unordered_map<std::string, std::unordered_map<std::string, std::vector<SignatureTemplate>>>
       expressionToTemplatedSignature_;
 
+  std::unordered_map<std::string,int64_t> expressionFreq_;
+  int64_t totalPicked{0};
   std::vector<CallableSignature> signatures_;
 
   /// Maps a given type to the functions that return that type.

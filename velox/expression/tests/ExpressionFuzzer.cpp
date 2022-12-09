@@ -361,6 +361,7 @@ ExpressionFuzzer::ExpressionFuzzer(
     }
 
     if (atLeastOneSupported) {
+      expressionFreq_[function.first] = 0;
       ++supportedFunctions;
     }
   }
@@ -657,7 +658,7 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromConcreteSignatures(
   size_t idx = boost::random::uniform_int_distribution<uint32_t>(
       0, eligible.size() - 1)(rng_);
   const auto& chosen = eligible[idx];
-
+  UpdateStats(chosen->name);
   return getCallExprFromCallable(*chosen);
 }
 
@@ -714,7 +715,7 @@ core::TypedExprPtr ExpressionFuzzer::generateExpressionFromSignatureTemplate(
   auto& argumentTypes = fuzzer.argumentTypes();
 
   CallableSignature callable{chosen->name, argumentTypes, false, returnType};
-
+  UpdateStats(chosen->name);
   return getCallExprFromCallable(callable);
 }
 
@@ -750,9 +751,7 @@ void ExpressionFuzzer::go() {
     reset();
 
     // Pick a random signature to choose the root return type.
-    size_t idx = boost::random::uniform_int_distribution<uint32_t>(
-        0, signatures_.size() - 1)(rng_);
-    const auto& rootType = signatures_[idx].returnType;
+    const auto& rootType = vectorFuzzer_.randType(1);
 
     // Generate expression tree and input data vectors.
     auto plan = generateExpression(rootType);
@@ -796,6 +795,7 @@ void ExpressionFuzzer::go() {
     reSeed();
     ++i;
   }
+  LogStats();
 }
 
 void expressionFuzzer(FunctionSignatureMap signatureMap, size_t seed) {
