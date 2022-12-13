@@ -330,10 +330,18 @@ ExpressionFuzzer::ExpressionFuzzer(
         // BIKRAM
         auto& returnType = signature->returnType().baseName();
         if (typeVariables.find(returnType) == typeVariables.end()) {
-          typeToExpressionList_[returnType].push_back(function.first);
+          // Only add a function name if it hasent been already added. This
+          // gives all others a fair chance to be selected.
+          if (typeToExpressionList_[returnType].empty() ||
+              typeToExpressionList_[returnType].back() != function.first) {
+            typeToExpressionList_[returnType].push_back(function.first);
+          }
         } else {
           // Return type is a template variable.
-          typeToExpressionList_[kTypeParameterName].push_back(function.first);
+          if (typeToExpressionList_[kTypeParameterName].empty() ||
+              typeToExpressionList_[kTypeParameterName].back() != function.first) {
+            typeToExpressionList_[kTypeParameterName].push_back(function.first);
+          }
         }
         // move the type variables after removing signatureTemplates_.
         expressionToTemplatedSignature_[function.first][returnType]
@@ -352,7 +360,10 @@ ExpressionFuzzer::ExpressionFuzzer(
         auto resolvedReturnType =
             SignatureBinder::tryResolveType(signature->returnType(), {}, {});
         auto returnType = typeToBaseName(resolvedReturnType);
-        typeToExpressionList_[returnType].push_back(function.first);
+        if (typeToExpressionList_[returnType].empty() ||
+            typeToExpressionList_[returnType].back() != function.first) {
+          typeToExpressionList_[returnType].push_back(function.first);
+        }
         expressionToSignature_[function.first][returnType].emplace_back(
             *callableFunction);
 

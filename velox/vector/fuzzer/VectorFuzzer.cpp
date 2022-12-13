@@ -705,7 +705,8 @@ TypePtr VectorFuzzer::randType(int maxDepth) {
   if (maxDepth <= 1 || rand<bool>(rng_)) {
     return kScalarTypes[rand<uint32_t>(rng_) % kNumScalarTypes];
   }
-  switch (rand<uint32_t>(rng_) % 3) {
+  // This equally distributes the probability among all types
+  switch (rand<uint32_t>(rng_) % (2 + kNumScalarTypes)) {
     case 0:
       return MAP(randType(0), randType(maxDepth - 1));
     case 1:
