@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "velox/expression/DecodedArgs.h"
+#include "velox/expression/PeeledEncoding.h"
 #include "velox/expression/StringWriter.h"
 #include "velox/expression/VectorFunction.h"
 #include "velox/functions/lib/string/StringImpl.h"
@@ -43,14 +44,14 @@ class FromUtf8Function : public exec::VectorFunction {
             ->as<SimpleVector<StringView>>()
             ->computeAndSetIsAscii(rows)) {
       // Input strings are all-ASCII.
-      toVarcharNoCopy(input, decodedInput, rows, context, result);
+      toVarcharNoCopy(input, rows, context, result);
       return;
     }
 
     auto firstInvalidRow = findFirstInvalidRow(decodedInput, rows);
     if (!firstInvalidRow.has_value()) {
       // All inputs are valid UTF-8 strings.
-      toVarcharNoCopy(input, decodedInput, rows, context, result);
+      toVarcharNoCopy(input, rows, context, result);
       return;
     }
 
@@ -193,18 +194,24 @@ class FromUtf8Function : public exec::VectorFunction {
 
   void toVarcharNoCopy(
       const VectorPtr& input,
-      DecodedVector& decodedInput,
       const SelectivityVector& rows,
-      const exec::EvalCtx& context,
+      exec::EvalCtx& context,
       VectorPtr& result) const {
     VectorPtr localResult;
-    if (decodedInput.isConstantMapping()) {
-      auto value = decodedInput.valueAt<StringView>(rows.begin());
+    velox::exec::LocalDecodedVector decoded(context);
+    std::vector<VectorPtr> peeledVectors;
+    auto peeledEncoding = velox::exec::PeeledEncoding::Peel(
+        {input}, rows, decoded, true, peeledVectors);
+
+    const VectorPtr& peeledInput =
+        peeledEncoding ? peeledVectors.front() : input;
+    if (peeledInput->isConstantEncoding()) {
+      auto value = peeledInput->as<ConstantVector<StringView>>()->valueAt(0);
       localResult = std::make_shared<ConstantVector<StringView>>(
           context.pool(), rows.end(), false, VARCHAR(), std::move(value));
-    } else if (decodedInput.isIdentityMapping()) {
-      auto flatInput = decodedInput.base()->asFlatVector<StringView>();
-
+    } else {
+      VELOX_CHECK(peeledInput->isFlatEncoding());
+      auto flatInput = peeledInput->asFlatVector<StringView>();
       auto stringBuffers = flatInput->stringBuffers();
       VELOX_CHECK_LE(rows.end(), flatInput->size());
       localResult = std::make_shared<FlatVector<StringView>>(
@@ -214,28 +221,11 @@ class FromUtf8Function : public exec::VectorFunction {
           rows.end(),
           flatInput->values(),
           std::move(stringBuffers));
-    } else {
-      auto base = decodedInput.base();
-      if (base->isConstantEncoding()) {
-        auto value = decodedInput.valueAt<StringView>(rows.begin());
-        localResult = std::make_shared<ConstantVector<StringView>>(
-            context.pool(), rows.end(), false, VARCHAR(), std::move(value));
-      } else {
-        auto flatBase = base->asFlatVector<StringView>();
-        auto stringBuffers = flatBase->stringBuffers();
-        localResult = decodedInput.wrap(
-            std::make_shared<FlatVector<StringView>>(
-                context.pool(),
-                VARCHAR(),
-                nullptr,
-                flatBase->size(),
-                flatBase->values(),
-                std::move(stringBuffers)),
-            *input,
-            rows.end());
-      }
     }
-
+    if (peeledEncoding) {
+      localResult =
+          peeledEncoding->wrap(VARCHAR(), context.pool(), localResult, rows);
+    }
     context.moveOrCopyResult(localResult, rows, result);
   }
 
