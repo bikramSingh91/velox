@@ -463,10 +463,11 @@ endif()
 # not provide new enough versions for us to use.
 if(CMAKE_HOST_SYSTEM_NAME MATCHES "Darwin")
   execute_process(
-    COMMAND brew --prefix bison
+    COMMAND /opt/homebrew/bin/brew --prefix bison
     RESULT_VARIABLE BREW_BISON
     OUTPUT_VARIABLE BREW_BISON_PREFIX
     OUTPUT_STRIP_TRAILING_WHITESPACE)
+  message(BREW_BISON="${BREW_BISON}")
   if(BREW_BISON EQUAL 0 AND EXISTS "${BREW_BISON_PREFIX}")
     message(
       STATUS "Found Bison keg installed by Homebrew at ${BREW_BISON_PREFIX}")
@@ -474,7 +475,7 @@ if(CMAKE_HOST_SYSTEM_NAME MATCHES "Darwin")
   endif()
 
   execute_process(
-    COMMAND brew --prefix flex
+    COMMAND /opt/homebrew/bin/brew --prefix flex
     RESULT_VARIABLE BREW_FLEX
     OUTPUT_VARIABLE BREW_FLEX_PREFIX
     OUTPUT_STRIP_TRAILING_WHITESPACE)
