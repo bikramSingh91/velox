@@ -685,8 +685,7 @@ std::string makeErrorMessage(
   message << extraRows.size() << " extra rows, " << missingRows.size()
           << " missing rows" << std::endl;
 
-  auto extraRowsToPrint =
-      std::min((size_t)FLAGS_max_error_rows, extraRows.size());
+  auto extraRowsToPrint = extraRows.size();
   message << extraRowsToPrint << " of extra rows:" << std::endl;
 
   for (int32_t i = 0; i < extraRowsToPrint; i++) {
@@ -696,8 +695,7 @@ std::string makeErrorMessage(
   }
   message << std::endl;
 
-  auto missingRowsToPrint =
-      std::min((size_t)FLAGS_max_error_rows, missingRows.size());
+  auto missingRowsToPrint = missingRows.size();
   message << missingRowsToPrint << " of missing rows:" << std::endl;
   for (int32_t i = 0; i < missingRowsToPrint; i++) {
     message << "\t";
@@ -852,20 +850,28 @@ std::string generateUserFriendlyDiff(
     const MaterializedRowMultiset& actualRows,
     const TypePtr& type) {
   std::vector<MaterializedRow> extraRows;
-  std::set_difference(
+/*  std::set_difference(
       actualRows.begin(),
       actualRows.end(),
       expectedRows.begin(),
       expectedRows.end(),
-      std::inserter(extraRows, extraRows.end()));
+      std::inserter(extraRows, extraRows.end()));*/
+
+  for(auto& item : actualRows) {
+    extraRows.push_back(item);
+  }
 
   std::vector<MaterializedRow> missingRows;
-  std::set_difference(
+/*  std::set_difference(
       expectedRows.begin(),
       expectedRows.end(),
       actualRows.begin(),
       actualRows.end(),
-      std::inserter(missingRows, missingRows.end()));
+      std::inserter(missingRows, missingRows.end()));*/
+
+  for(auto& item : expectedRows) {
+    missingRows.push_back(item);
+  }
 
   return makeErrorMessage(
       missingRows, extraRows, expectedRows.size(), actualRows.size(), type);
